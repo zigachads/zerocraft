@@ -23,6 +23,46 @@ pub const StatusPacket = struct {
     }
 };
 
+pub const LoginDisconnectPacket = struct {
+    const Self = @This();
+
+    allocator: std.mem.Allocator,
+    reason: []const u8,
+
+    pub fn write(self: *const Self, writer: anytype) !void {
+        const reason = String{
+            .data = self.reason,
+        };
+        try reason.write(writer);
+    }
+};
+
+pub const LoginStartPacket = struct {
+    const Self = @This();
+
+    player_name: []const u8,
+    player_uuid: ?u128,
+
+    pub fn read(reader: anytype, allocator: std.mem.Allocator) !Self {
+        const player_name = try String.read(reader, allocator);
+        const has_player_uuid = try reader.readByte();
+        var player_uuid: ?u128 = null;
+
+        if (has_player_uuid == 0x01)
+            player_uuid = try std.leb.readULEB128(u128, reader);
+
+        return Self{
+            .player_name = player_name.data,
+            .player_uuid = player_uuid,
+        };
+    }
+
+    pub fn write(self: *const Self, writer: anytype) !void {
+        _ = writer;
+        _ = self;
+    }
+};
+
 pub const Handshake = struct {
     const Self = @This();
 
@@ -66,8 +106,8 @@ pub fn handle_status(
             .allocator = allocator,
             .data = .{
                 .version = .{
-                    .name = "1.19.4",
-                    .protocol = 762,
+                    .name = "1.20.1",
+                    .protocol = 763,
                 },
                 .players = .{
                     .max = 69420,
@@ -136,6 +176,24 @@ pub fn main() !void {
                     },
                     else => {
                         // TODO: handle login packet 👀
+                        _ = try std.leb.readILEB128(i32, reader);
+                        const login_start_request_packet_id = try std.leb.readILEB128(i32, reader);
+                        std.debug.assert(login_start_request_packet_id == 0x00);
+
+                        const login_start = try LoginStartPacket.read(reader, allocator);
+                        std.log.debug("received login packet: {s}, {?}", .{
+                            login_start.player_name,
+                            login_start.player_uuid,
+                        });
+
+                        const disconnect_packet = Packet(LoginDisconnectPacket){
+                            .id = 0x00,
+                            .data = .{
+                                .allocator = allocator,
+                                .reason = "bruh",
+                            },
+                        };
+                        try disconnect_packet.write(writer);
                     },
                 }
             },

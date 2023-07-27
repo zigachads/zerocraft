@@ -55,7 +55,7 @@ pub const String = struct {
 
     pub fn read(reader: anytype, allocator: std.mem.Allocator) !String {
         const length = try std.leb.readILEB128(i32, reader);
-        const data = try allocator.alloc(u8, @intCast(usize, length));
+        const data = try allocator.alloc(u8, @intCast(length));
 
         _ = try reader.readAll(data);
 
