@@ -2,105 +2,18 @@ const std = @import("std");
 const types = @import("types.zig");
 const Packet = @import("packet.zig").Packet;
 const String = @import("packet.zig").String;
-
-pub const StatusPacket = struct {
-    const Self = @This();
-
-    allocator: std.mem.Allocator,
-    data: types.StatusResponse,
-
-    pub fn write(self: *const Self, writer: anytype) !void {
-        const json = try std.json.stringifyAlloc(
-            self.allocator,
-            self.data,
-            .{},
-        );
-
-        const string = String{
-            .data = json,
-        };
-        try string.write(writer);
-    }
-};
-
-pub const LoginDisconnectPacket = struct {
-    const Self = @This();
-
-    allocator: std.mem.Allocator,
-    reason: []const u8,
-
-    pub fn write(self: *const Self, writer: anytype) !void {
-        const reason = String{
-            .data = self.reason,
-        };
-        try reason.write(writer);
-    }
-};
-
-pub const LoginStartPacket = struct {
-    const Self = @This();
-
-    player_name: []const u8,
-    player_uuid: ?u128,
-
-    pub fn read(reader: anytype, allocator: std.mem.Allocator) !Self {
-        const player_name = try String.read(reader, allocator);
-        const has_player_uuid = try reader.readByte();
-        var player_uuid: ?u128 = null;
-
-        if (has_player_uuid == 0x01)
-            player_uuid = try std.leb.readULEB128(u128, reader);
-
-        return Self{
-            .player_name = player_name.data,
-            .player_uuid = player_uuid,
-        };
-    }
-
-    pub fn write(self: *const Self, writer: anytype) !void {
-        _ = writer;
-        _ = self;
-    }
-};
-
-pub const Handshake = struct {
-    const Self = @This();
-
-    protocol_version: i32,
-    server_address: []const u8,
-    server_port: u16,
-    next_state: i32,
-
-    pub fn write(self: *const Self, writer: anytype) !void {
-        _ = writer;
-        _ = self;
-    }
-
-    pub fn read(reader: anytype, allocator: std.mem.Allocator) !Self {
-        const protocol_version = try std.leb.readILEB128(i32, reader);
-        const server_address = try String.read(reader, allocator);
-        const server_port = try reader.readIntBig(u16);
-        const next_state = try std.leb.readILEB128(i32, reader);
-
-        return Self{
-            .protocol_version = protocol_version,
-            .server_address = server_address.data,
-            .server_port = server_port,
-            .next_state = next_state,
-        };
-    }
-};
+const packets = @import("packets.zig");
 
 pub fn handle_status(
     allocator: std.mem.Allocator,
     reader: anytype,
     writer: anytype,
 ) !void {
-    _ = try std.leb.readILEB128(i32, reader);
-    const status_request_packet_id = try std.leb.readILEB128(i32, reader);
+    _ = try std.leb.readULEB128(u32, reader);
+    const status_request_packet_id = try std.leb.readULEB128(u32, reader);
     std.debug.assert(status_request_packet_id == 0x00);
 
-    const status_packet = Packet(StatusPacket){
+    const status_packet = Packet(packets.StatusPacket){
         .id = 0x0,
         .data = .{
             .allocator = allocator,
@@ -125,14 +38,14 @@ pub fn handle_status(
 
     try status_packet.write(writer);
 
-    const ping_request_length = try std.leb.readILEB128(i32, reader);
-    const ping_request_id = try std.leb.readILEB128(i32, reader);
+    const ping_request_length = try std.leb.readULEB128(u32, reader);
+    const ping_request_id = try std.leb.readULEB128(u32, reader);
     std.debug.assert(ping_request_id == 0x01);
-    const ping_request_payload = try std.leb.readILEB128(i32, reader);
+    const ping_request_payload = try std.leb.readULEB128(u32, reader);
 
-    try std.leb.writeILEB128(writer, ping_request_length);
-    try std.leb.writeILEB128(writer, ping_request_id);
-    try std.leb.writeILEB128(writer, ping_request_payload);
+    try std.leb.writeULEB128(writer, ping_request_length);
+    try std.leb.writeULEB128(writer, ping_request_id);
+    try std.leb.writeULEB128(writer, ping_request_payload);
 }
 
 pub fn main() !void {
@@ -154,14 +67,14 @@ pub fn main() !void {
         const reader = conn.stream.reader();
         const writer = conn.stream.writer();
 
-        const packet_length = try std.leb.readILEB128(i32, reader);
+        const packet_length = try std.leb.readULEB128(u32, reader);
         std.log.debug("packet length: {d}", .{packet_length});
-        const packet_id = try std.leb.readILEB128(i32, reader);
+        const packet_id = try std.leb.readULEB128(u32, reader);
         std.log.debug("packet id: 0x{X}", .{packet_id});
 
         switch (packet_id) {
             0x00 => {
-                const handshake_packet = try Handshake.read(reader, allocator);
+                const handshake_packet = try packets.Handshake.read(reader, allocator);
                 std.log.debug("received handshake: {d}, {s}, {d}, {d}", .{
                     handshake_packet.protocol_version,
                     handshake_packet.server_address,
@@ -176,24 +89,28 @@ pub fn main() !void {
                     },
                     else => {
                         // TODO: handle login packet 👀
-                        _ = try std.leb.readILEB128(i32, reader);
-                        const login_start_request_packet_id = try std.leb.readILEB128(i32, reader);
-                        std.debug.assert(login_start_request_packet_id == 0x00);
-
-                        const login_start = try LoginStartPacket.read(reader, allocator);
+                        const login_start = try Packet(packets.LoginStart).read(reader, allocator);
                         std.log.debug("received login packet: {s}, {?}", .{
-                            login_start.player_name,
-                            login_start.player_uuid,
+                            login_start.data.player_name,
+                            login_start.data.player_uuid,
                         });
 
-                        const disconnect_packet = Packet(LoginDisconnectPacket){
-                            .id = 0x00,
+                        const login_success = Packet(packets.LoginSuccess){
+                            .id = 0x02,
                             .data = .{
-                                .allocator = allocator,
-                                .reason = "bruh",
+                                .player_uuid = login_start.data.player_uuid.?,
+                                .player_name = login_start.data.player_name,
                             },
                         };
-                        try disconnect_packet.write(writer);
+                        try login_success.write(writer);
+
+                        //const disconnect_packet = Packet(LoginDisconnectPacket){
+                        //    .id = 0x00,
+                        //    .data = .{
+                        //        .reason = "bruh",
+                        //    },
+                        //};
+                        //try disconnect_packet.write(writer);
                     },
                 }
             },
